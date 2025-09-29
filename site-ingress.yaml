@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: site-ingress
+  namespace: arlanito
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: arlanito1.kz
+    http:
+      paths:
+      - backend:
+          service:
+            name: site-service
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
+  tls:
+  - hosts:
+    - arlanito.kz
+    secretName: arlanito-secret
