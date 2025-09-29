@@ -1,93 +1,133 @@
 # DauArlo
 
+CI/CD для развертывания веб-приложения в Kubernetes
+Этот репозиторий содержит полный пример настройки автоматического развертывания (CI/CD) простого веб-приложения NGINX в кластер Kubernetes с помощью GitLab.
 
+Пайплайн автоматически:
 
-## Getting started
+Собирает Docker-образ с вашим сайтом.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+Загружает его в GitLab Container Registry.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+Разворачивает новую версию приложения в Kubernetes.
 
-## Add your files
+⚙️ Что понадобится для запуска
+Доступ к кластеру Kubernetes.
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+Установленный kubectl на вашем локальном компьютере для первоначальной настройки.
 
-```
-cd existing_repo
-git remote add origin http://192.168.10.86/root/dauarlo.git
-git branch -M main
-git push -uf origin main
-```
+Установленный Ingress-контроллер в кластере (например, NGINX Ingress).
 
-## Integrate with your tools
+Проект в GitLab (куда вы загрузите этот код).
 
-- [ ] [Set up project integrations](http://192.168.10.86/root/dauarlo/-/settings/integrations)
+Доменное имя, которое будет указывать на ваш сайт.
 
-## Collaborate with your team
+🔑 Настройка
+Чтобы пайплайн заработал, нужно один раз настроить связь между GitLab и вашим кластером Kubernetes.
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+Шаг 1: Подготовка Kubernetes
+Сначала создадим в кластере специальную учётную запись (ServiceAccount) для GitLab и дадим ей необходимые права.
 
-## Test and Deploy
+Создайте ServiceAccount, Role и RoleBinding.
+Выполните эту команду на вашем локальном компьютере:
 
-Use the built-in continuous integration in GitLab.
+Bash
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gitlab-ci-sa
+  namespace: default
+---
+apiVersion: rbac.authorization.k разновидности v1
+kind: Role
+metadata:
+  name: gitlab-ci-role
+  namespace: default
+rules:
+- apiGroups: ["", "apps", "networking.k8s.io"]
+  resources: ["deployments", "services", "pods", "ingresses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gitlab-ci-binding
+  namespace: default
+subjects:
+- kind: ServiceAccount
+  name: gitlab-ci-sa
+  namespace: default
+roleRef:
+  kind: Role
+  name: gitlab-ci-role
+  apiGroup: rbac.authorization.k8s.io
+EOF
+Сгенерируйте токен для GitLab.
+Этот токен будет использоваться пайплайном для доступа к кластеру.
 
-***
+Bash
 
-# Editing this README
+kubectl create token gitlab-ci-sa -n default --duration=8760h
+Сохраните этот токен, он понадобится на следующем шаге.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+Шаг 2: Настройка переменных в GitLab
+Теперь нужно передать данные для доступа к кластеру в GitLab в виде защищённых переменных.
 
-## Suggestions for a good README
+В вашем проекте GitLab перейдите в Settings → CI/CD.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+Найдите раздел Variables и нажмите Expand.
 
-## Name
-Choose a self-explaining name for your project.
+Создайте следующие переменные:
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+Key	Value	Protected	Masked
+KUBE_SERVER	URL вашего Kubernetes API-сервера	Да	Да
+KUBE_CA_DATA	Сертификат вашего кластера (Base64)	Да	Да
+KUBE_TOKEN	Токен, который вы сгенерировали на Шаге 1	Да	Да
+APP_HOST	Ваше доменное имя (например, arlanito.kz)	Да	Нет
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+Export to Sheets
+Как получить KUBE_SERVER и KUBE_CA_DATA?
+Выполните kubectl config view --minify на вашем компьютере, и вы увидите их в выводе.
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+Шаг 3: Настройка DNS
+Убедитесь, что ваше доменное имя (APP_HOST) указывает на внешний IP-адрес вашего Ingress-контроллера.
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+Узнайте IP-адрес командой: kubectl get svc -n ingress-nginx
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Создайте A-запись в настройках вашего домена, указывающую на этот IP.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+🚀 Как это работает
+Коммит в main: Любой git push в ветку main автоматически запускает пайплайн.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+Этап build:
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+Запускается задача, которая находит Dockerfile.
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+Собирается Docker-образ, в который копируются файлы из папки html/.
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+Готовый образ загружается в GitLab Container Registry, привязанный к вашему проекту.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+Этап deploy:
 
-## License
-For open source projects, say how it is licensed.
+Задача подключается к вашему Kubernetes-кластеру, используя переменные, которые вы настроили.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Она применяет манифесты из папки kubernetes/, подставляя в них нужные переменные (например, имя образа из предыдущего шага и доменное имя).
+
+Команда kubectl rollout status дожидается, пока новая версия приложения будет успешно развёрнута.
+
+После этого ваш сайт обновлён и доступен по указанному доменному имени.
+
+📁 Структура проекта
+Убедитесь, что ваш проект имеет следующую структуру:
+
+.
+├── .gitlab-ci.yml      # Файл пайплайна
+├── Dockerfile          # Инструкция для сборки Docker-образа
+├── html/               # Папка с файлами вашего сайта
+│   └── index.html
+└── kubernetes/         # Папка с манифестами Kubernetes
+    ├── deployment.yaml
+    ├── service.yaml
+    └── ingress.yaml
