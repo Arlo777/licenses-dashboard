@@ -1,0 +1,59 @@
+deploy:
+  stage: deploy
+  image: alpine:latest
+
+  before_script:
+    - apk add --no-cache kubectl gettext
+    - set -eo pipefail
+    # Проверяем, что заданы необходимые переменные
+    - |
+      for v in KUBE_SERVER KUBE_CA_DATA KUBE_TOKEN; do
+        # V-- ИЗМЕНЕНИЕ ТОЛЬКО В СТРОКЕ НИЖЕ --V
+        if [ -z "$(eval echo "\$$v")" ]; then
+          echo "❌ CI variable $v is not set. Add it in Project → Settings → CI/CD → Variables." >&2
+          exit 1
+        fi
+      done
+    # ... (остальная часть без изменений) ...
+    - SERVER_CLEAN="$(printf '%s' "$KUBE_SERVER" | tr -d '\r')"
+    - CA_CLEAN="$(printf '%s' "$KUBE_CA_DATA" | tr -d '\r\n ')"
+    - TOKEN_CLEAN="$(printf '%s' "$KUBE_TOKEN" | sed -n '$p' | tr -d '\r\n')"
+    - |
+      cat > kubeconfig <<EOF
+      apiVersion: v1
+      kind: Config
+      clusters:
+      - name: cluster.local
+        cluster:
+          server: ${SERVER_CLEAN}
+          certificate-authority-data: ${CA_CLEAN}
+      users:
+      - name: gitlab-ci
+        user:
+          token: ${TOKEN_CLEAN}
+      contexts:
+      - name: gitlab-ci@cluster.local
+        context:
+          cluster: cluster.local
+          user: gitlab-ci
+          namespace: ${KUBERNETES_NAMESPACE:-default}
+      current-context: gitlab-ci@cluster.local
+      EOF
+    - export KUBECONFIG="$PWD/kubeconfig"
+    - kubectl config view --minify
+    - kubectl auth can-i get pods -n "$KUBERNETES_NAMESPACE"
+    - kubectl auth can-i create deployment.apps -n "$KUBERNETES_NAMESPACE"
+    - kubectl get pods -n "$KUBERNETES_NAMESPACE" || true
+
+  script:
+    - kubectl apply -n "$KUBERNETES_NAMESPACE" -f kubernetes/deployment.yaml
+    - kubectl apply -n "$KUBERNETES_NAMESPACE" -f kubernetes/service.yaml
+    - envsubst < kubernetes/ingress.yaml | kubectl apply -n "$KUBERNETES_NAMESPACE" -f -
+    - kubectl rollout status deploy/my-nginx-deployment -n "$KUBERNETES_NAMESPACE"
+
+  environment:
+    name: production
+    url: "http://$APP_HOST"
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
